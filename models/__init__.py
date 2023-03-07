@@ -1,1 +1,1 @@
-from .unet2d import UNet
+from .unet2d import UNet, UNet_2D, UNet_3D

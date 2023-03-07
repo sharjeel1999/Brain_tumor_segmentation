@@ -1,4 +1,3 @@
-
 import os
 import numpy as np
 from torch.utils.data import Dataset
@@ -16,6 +15,7 @@ class Prepare_dataset(Dataset):
         
         self.slices = slices
         self.get_samples()
+        print('Prepared samples')
         
         self.transform = transforms.ToTensor()
         
@@ -38,18 +38,62 @@ class Prepare_dataset(Dataset):
                     
     def get_combined_slices(self, t1, t1ce, t2, flair, mask, selected_ind):
         
-        t1_sliced = t1[:, :, selected_ind - ((self.slices-1)/2):selected_ind - ((self.slices-1)/2)]
-        t1ce_sliced = t1ce[:, :, selected_ind - ((self.slices-1)/2):selected_ind - ((self.slices-1)/2)]
-        t2_sliced = t2[:, :, selected_ind - ((self.slices-1)/2):selected_ind - ((self.slices-1)/2)]
-        flair_sliced = flair[:, :, selected_ind - ((self.slices-1)/2):selected_ind - ((self.slices-1)/2)]
-        mask_sliced = mask[:, :, selected_ind - ((self.slices-1)/2):selected_ind - ((self.slices-1)/2)]
+        t1_sliced = t1[:, :, int(selected_ind - ((self.slices - 1)/2)) : int(selected_ind + ((self.slices - 1)/2) + 1)]
+        t1ce_sliced = t1ce[:, :, int(selected_ind - ((self.slices - 1)/2)) : int(selected_ind + ((self.slices - 1)/2) + 1)]
+        t2_sliced = t2[:, :, int(selected_ind - ((self.slices - 1)/2)) : int(selected_ind + ((self.slices - 1)/2) + 1)]
+        flair_sliced = flair[:, :, int(selected_ind - ((self.slices - 1)/2)) : int(selected_ind + ((self.slices - 1)/2) + 1)]
+        mask_sliced = mask[:, :, selected_ind]
         
-        concatenated = np.concatenate((t1_sliced, t1ce_sliced, t2_sliced, flair_sliced))
+        concatenated1 = np.concatenate((t1ce_sliced, flair_sliced), axis = 2)
         
-        return concatenated, mask_sliced
+        t1ce_sliced_2 = t1ce[:, :, int(selected_ind - ((self.slices-1)/2)):selected_ind + 1]
+        flair_sliced_2 = flair[:, :, int(selected_ind - ((self.slices-1)/2)):selected_ind + 1]
+        mask_sliced_2 = mask[:, :, int(selected_ind - ((self.slices-1)/2)):selected_ind]
+        
+        concatenated2 = np.concatenate((t1ce_sliced_2, flair_sliced_2, mask_sliced_2), axis = 2)
+        
+        return concatenated1, concatenated2, mask_sliced
+        
+    def get_combined_slices_order(self, t1, t1ce, t2, flair, mask, selected_ind):
+        start = int(selected_ind - ((self.slices - 1)/2))
+        end = int(selected_ind + ((self.slices - 1)/2) + 1)
+        
+        input1 = []
+        input2 = []
+        gt_masks = []
+        
+        for z in range(start, end):
+            t1_slice = t1[:, :, z]
+            t1ce_slice = t1ce[:, :, z]
+            t2_slice = t2[:, :, z]
+            flair_slice = flair[:, :, z]
+            mask_slice = mask[:, :, z]
+            
+            input1.append(t1ce_slice)
+            input1.append(flair_slice)
+            
+            if z < selected_ind:
+                input2.append(t1ce_slice)
+                input2.append(flair_slice)
+                input2.append(mask_slice)
+            
+            if z == selected_ind:
+                input2.append(t1ce_slice)
+                input2.append(flair_slice)
+                gt_masks.append(mask_slice)
         
         
-                    
+        input1 = np.array(input1)
+        input2 = np.array(input2)
+        gt_masks = np.array(gt_masks)
+        
+        input1 = np.transpose(input1, (1, 2, 0))
+        input2 = np.transpose(input2, (1, 2, 0))
+        gt_masks = np.transpose(gt_masks, (1, 2, 0))
+        
+        
+        return input1, input2, gt_masks
+        
     def __getitem__(self, index):
         ind, selected_ind = self.inds_record[index]
         
@@ -67,10 +111,14 @@ class Prepare_dataset(Dataset):
         flair = (flair - flair.min()) / (flair.max() - flair.min())
         
         
-        input_sample, mask_sliced = self.get_combined_slices(t1, t1ce, t2, flair, mask)
+        input1_sample, input2_sample, mask_sliced = self.get_combined_slices_order(t1, t1ce, t2, flair, mask, selected_ind)
+        #print('inter input1: ', np.array(input1_sample).shape)
+        #print('inter input2: ', np.array(input2_sample).shape)
+        #print('mask sliced: ', np.array(mask_sliced).shape)
         
-        input_sample = self.transform(input_sample)
+        input1_sample = self.transform(input1_sample)
+        input2_sample = self.transform(input2_sample)
         mask_sliced = self.transform(mask_sliced)
         
-        return input_sample, mask_sliced
+        return input1_sample, input2_sample, mask_sliced
         
