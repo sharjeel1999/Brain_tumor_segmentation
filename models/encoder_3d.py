@@ -25,7 +25,7 @@ class Down(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.maxpool_conv = nn.Sequential(
-            nn.MaxPool3d(2),
+            nn.MaxPool3d((1, 2, 2)),
             DoubleConv(in_channels, out_channels)
         )
 
@@ -67,10 +67,9 @@ class OutConv(nn.Module):
     
 
 class UNet_3D(nn.Module):
-    def __init__(self, n_channels, n_classes, bilinear=False):
+    def __init__(self, n_channels, bilinear=False):
         super(UNet_3D, self).__init__()
         self.n_channels = n_channels
-        self.n_classes = n_classes
         self.bilinear = bilinear
 
         self.inc = (DoubleConv(n_channels, 64))
@@ -85,6 +84,18 @@ class UNet_3D(nn.Module):
         # self.up3 = (Up(256, 128 // factor, bilinear))
         # self.up4 = (Up(128, 64, bilinear))
         # self.outc = (OutConv(64, n_classes))
+    
+    def sync_channels(self, B, C, Z, X, Y, xx):
+    
+        sync_layer = nn.Sequential(
+                nn.Conv2d(C*Z, C, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(C),
+                nn.ReLU(inplace=True)
+            ).cuda()
+        
+        xx = sync_layer(xx)
+        
+        return xx
 
     def forward(self, x):
         x1 = self.inc(x)
@@ -97,4 +108,10 @@ class UNet_3D(nn.Module):
         # x = self.up3(x, x2)
         # x = self.up4(x, x1)
         # logits = self.outc(x)
+        
+        B, C, Z, X, Y = x5.shape
+        x5 = torch.reshape(x5, (B, C*Z, X, Y))
+        
+        x5 = self.sync_channels(B, C, Z, X, Y, x5)
+        
         return x5
