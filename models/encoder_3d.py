@@ -84,18 +84,23 @@ class UNet_3D(nn.Module):
         # self.up3 = (Up(256, 128 // factor, bilinear))
         # self.up4 = (Up(128, 64, bilinear))
         # self.outc = (OutConv(64, n_classes))
-    
-    def sync_channels(self, B, C, Z, X, Y, xx):
-    
-        sync_layer = nn.Sequential(
-                nn.Conv2d(C*Z, C, kernel_size=3, padding=1, bias=False),
-                nn.BatchNorm2d(C),
+        self.sync_layer = nn.Sequential(
+                nn.Conv2d(1024*8, 1024, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(1024),
                 nn.ReLU(inplace=True)
-            ).cuda()
+            )
+    
+    # def sync_channels(self, B, C, Z, X, Y, xx):
+    
+    #     sync_layer = nn.Sequential(
+    #             nn.Conv2d(C*Z, C, kernel_size=3, padding=1, bias=False),
+    #             nn.BatchNorm2d(C),
+    #             nn.ReLU(inplace=True)
+    #         ).cuda()
         
-        xx = sync_layer(xx)
+    #     xx = sync_layer(xx)
         
-        return xx
+    #     return xx
 
     def forward(self, x):
         x1 = self.inc(x)
@@ -110,8 +115,9 @@ class UNet_3D(nn.Module):
         # logits = self.outc(x)
         
         B, C, Z, X, Y = x5.shape
+        #print('x5 shape: ', x5.shape)
         x5 = torch.reshape(x5, (B, C*Z, X, Y))
         
-        x5 = self.sync_channels(B, C, Z, X, Y, x5)
+        x5 = self.sync_layer(x5)#B, C, Z, X, Y, x5)
         
         return x5

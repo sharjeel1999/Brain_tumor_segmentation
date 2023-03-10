@@ -18,6 +18,7 @@ class Prepare_dataset(Dataset):
         print('Prepared samples')
         
         self.transform = transforms.ToTensor()
+        #self.prepare_dataset()
         
         
     def __len__(self):
@@ -35,6 +36,7 @@ class Prepare_dataset(Dataset):
                 if sel_ind - ((self.slices-1)/2) >= 0 and sel_ind + ((self.slices-2)/2):
                     
                     self.inds_record.append([ind, sel_ind])
+        print('Data len: ', len(self.inds_record))
                     
     def get_combined_slices(self, t1, t1ce, t2, flair, mask, selected_ind):
         
@@ -93,10 +95,34 @@ class Prepare_dataset(Dataset):
         
         
         return input1, input2, gt_masks
+    
+    def prepare_dataset(self):
+        self.prepared_data = []
         
+        for i in range(len(self.inds_record)):
+            ind, selected_ind = self.inds_record[i]
+            t1_path, t1ce_path, t2_path, flair_path, mask_path = self.data[ind]
+            
+            t1 = nib.load(t1_path).get_fdata()
+            t1ce = nib.load(t1ce_path).get_fdata()
+            t2 = nib.load(t2_path).get_fdata()
+            flair = nib.load(flair_path).get_fdata()
+            mask = nib.load(mask_path).get_fdata()
+            
+            t1 = (t1 - t1.min()) / (t1.max() - t1.min())
+            t1ce = (t1ce - t1ce.min()) / (t1ce.max() - t1ce.min())
+            t2 = (t2 - t2.min()) / (t2.max() - t2.min())
+            flair = (flair - flair.min()) / (flair.max() - flair.min())
+            
+            
+            input1_sample, input2_sample, mask_sliced = self.get_combined_slices_order(t1, t1ce, t2, flair, mask, selected_ind)
+            
+            self.prepared_data.append([input1_sample, input2_sample, mask_sliced])
+        
+    
     def __getitem__(self, index):
-        ind, selected_ind = self.inds_record[index]
         
+        ind, selected_ind = self.inds_record[index]
         t1_path, t1ce_path, t2_path, flair_path, mask_path = self.data[ind]
         
         t1 = nib.load(t1_path).get_fdata()
@@ -112,9 +138,13 @@ class Prepare_dataset(Dataset):
         
         
         input1_sample, input2_sample, mask_sliced = self.get_combined_slices_order(t1, t1ce, t2, flair, mask, selected_ind)
+        
+        #input1_sample, input2_sample, mask_sliced = self.prepared_data[index]
         #print('inter input1: ', np.array(input1_sample).shape)
         #print('inter input2: ', np.array(input2_sample).shape)
         #print('mask sliced: ', np.array(mask_sliced).shape)
+        
+        mask_sliced[mask_sliced == 4] = 3
         
         input1_sample = self.transform(input1_sample)
         input2_sample = self.transform(input2_sample)

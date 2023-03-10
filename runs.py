@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
+from utils import loss_segmentation, loss_detection, dice_coeff
 
-def Single_pass_initial(encoder_2d, encoder_3d, decoder, input_1, input_2):
+def Single_pass_initial(encoder_2d, encoder_3d, decoder, input_1, input_2, gt_mask):
     out_2d = encoder_2d(input_1)
     out_3d = encoder_3d(input_2)
     
@@ -12,18 +13,29 @@ def Single_pass_initial(encoder_2d, encoder_3d, decoder, input_1, input_2):
     
     dec_out = decoder(combined_features)
     
-    return dec_out
+    loss, dsc, iou = loss_segmentation(dec_out, gt_mask)
+    
+    metrics = {}
+    metrics['dice'] = dsc
+    metrics['iou'] = iou
+    
+    return loss, metrics
 
-def Single_pass_regularization(encoder_2d, encoder_3d, discriminator1, discriminator2, input_1, input_2):
+def Single_pass_regularization(encoder_2d, encoder_3d, discriminator1, discriminator2, input_1, input_2, gt1, gt2):
     out_2d = encoder_2d(input_1)
     out_3d = encoder_3d(input_2)
     
     disc_out_1 = discriminator1(out_2d)
     disc_out_2 = discriminator2(out_3d)
     
-    return disc_out_1, disc_out_2
+    det_loss1 = loss_detection(disc_out_1, gt1)
+    det_loss2 = loss_detection(disc_out_2, gt2)
+    
+    loss = det_loss1 + det_loss2
+    
+    return loss
 
-def Single_pass_complete(encoder_2d, encoder_3d, decoder, discriminator1, discriminator2, input_1, input_2):
+def Single_pass_complete(encoder_2d, encoder_3d, decoder, discriminator1, discriminator2, input_1, input_2, gt_mask, gt1, gt2):
     out_2d = encoder_2d(input_1)
     out_3d = encoder_3d(input_2)
     
@@ -34,7 +46,13 @@ def Single_pass_complete(encoder_2d, encoder_3d, decoder, discriminator1, discri
     
     dec_out = decoder(combined_features)
     
-    return disc_out_1, disc_out_2, dec_out
+    seg_loss, dsc, iou = loss_segmentation(dec_out, gt_mask)
+    det_loss1 = loss_detection(disc_out_1, gt1)
+    det_loss2 = loss_detection(disc_out_2, gt2)
+    
+    loss = seg_loss + det_loss1 + det_loss2
+    
+    return loss
 
 
     

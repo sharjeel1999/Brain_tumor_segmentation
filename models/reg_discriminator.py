@@ -43,17 +43,20 @@ class Discriminator(nn.Module):
         self.conv1 = DoubleConv(in_channels, 64)
         
     def set_layers(self, x):
+        
         b, f = x.shape
-        self.linear1 = Linear_block(f, 1024)
-        self.linear2 = Linear_block(1024, 512)
-        self.linear3 = Linear_block(512, 256)
-        self.linear4 = Linear_block(256, 128)
-        self.linear5 = Linear_block(128, 64)
-        self.linear6 = Linear_block(64, 32)
-        self.linear7 = Linear_block(32, self.classes)
+        self.linear1 = Linear_block(f, 1024).cuda()
+        self.linear2 = Linear_block(1024, 512).cuda()
+        self.linear3 = Linear_block(512, 256).cuda()
+        self.linear4 = Linear_block(256, 128).cuda()
+        self.linear5 = Linear_block(128, 64).cuda()
+        self.linear6 = Linear_block(64, 32).cuda()
+        self.linear7 = Linear_block(32, self.classes).cuda()
     
     def forward(self, x):
         x = self.conv1(x)
+        x = torch.flatten(x, start_dim = 1)
+        print('flatten shape: ', x.shape)
         self.set_layers(x)
         
         x = self.linear1(x)
