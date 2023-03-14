@@ -60,8 +60,8 @@ record_save_path = ['D:\\brain_tumor_segmentation\\record_saves\\experiment_1\\i
 trainer = Run_Model(weight_save_path, record_save_path, encoder_2d, encoder_3d, decoder, discriminator_1, discriminator_2)
 
 if __name__ == '__main__':
-    trainer.train_loop(15, base_lr, Train_loader, Validation_loader)
-    trainer.Regularization_Loop(15, base_lr, Train_loader, Validation_loader)
+    #trainer.train_loop(15, base_lr, Train_loader, Validation_loader)
+    trainer.Regularization_Loop(8, base_lr, Train_loader, Validation_loader)
     trainer.Combined_loop(100, base_lr, Train_loader, Validation_loader)
 
 

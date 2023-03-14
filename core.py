@@ -7,6 +7,7 @@ from runs import Single_pass_initial
 from utils import loss_segmentation, loss_detection, dice_coeff, class_dice
 from torch.autograd import Variable
 import time
+from tqdm import tqdm
 
 class Run_Model():
     def __init__(self, weight_save_path, record_save_path, encoder_2d, encoder_3d, decoder, discriminator1, discriminator2):
@@ -38,19 +39,49 @@ class Run_Model():
         
         return loss, metrics
     
-    def Single_pass_regularization(self, input_1, input_2):
+    def Single_pass_regularization(self, input_1, input_2, optimizer_gen, optimizer_disc):
+        EPS = 1e-15
         Tensor = torch.cuda.FloatTensor
         input_2 = torch.unsqueeze((input_2), dim = 1)
+        
+        self.encoder_2d.eval()
+        self.encoder_3d.eval()
+        self.discriminator1.train()
+        self.discriminator2.train()
+        
         out_2d = self.encoder_2d(input_1)
         out_3d = self.encoder_3d(input_2)
         
         z = Variable(Tensor(np.random.normal(0, 1, (input_1.shape[0], out_2d.shape[1], out_2d.shape[2], out_2d.shape[3])))).cuda()
         
-        disc_out_1 = self.discriminator1(out_2d)
-        disc_out_2 = self.discriminator2(out_3d)
+        disc_out_1_fake = self.discriminator1(out_2d)
+        disc_out_2_fake = self.discriminator2(out_3d)
         
-        disc_out_1_fake = self.discriminator1(z)
-        disc_out_2_fake = self.discriminator2(z)
+        disc_out_1 = self.discriminator1(z)
+        disc_out_2 = self.discriminator2(z)
+        
+        D_loss_1 = -torch.mean(torch.log(disc_out_1 + EPS) + torch.log(1 - disc_out_1_fake + EPS))
+        D_loss_2 = -torch.mean(torch.log(disc_out_2 + EPS) + torch.log(1 - disc_out_2_fake + EPS))
+        tot_disc_loss = D_loss_1 + D_loss_2
+        tot_disc_loss.backward()
+        optimizer_disc.step()
+        
+        self.encoder_2d.train()
+        self.encoder_3d.train()
+        self.discriminator1.eval()
+        self.discriminator2.eval()
+        
+        out_2d = self.encoder_2d(input_1)
+        out_3d = self.encoder_3d(input_2)
+        
+        disc_out_1_fakee = self.discriminator1(out_2d)
+        disc_out_2_fakee = self.discriminator2(out_3d)
+        
+        G_loss_1 = -torch.mean(torch.log(disc_out_1_fakee + EPS))
+        G_loss_2 = -torch.mean(torch.log(disc_out_2_fakee + EPS))
+        tot_gen_loss = G_loss_1 + G_loss_2
+        tot_gen_loss.backward()
+        optimizer_gen.step()
         
         ONES = Variable(Tensor(input_1.shape[0], 1).fill_(1.0), requires_grad=False).long()
         ZEROS = Variable(Tensor(input_1.shape[0], 1).fill_(0.0), requires_grad=False).long()
@@ -58,25 +89,25 @@ class Run_Model():
         ONES = torch.squeeze(ONES, dim = 1)
         ZEROS = torch.squeeze(ZEROS, dim = 1)
         
-        det_loss1 = loss_detection(disc_out_1, ONES)
-        det_loss2 = loss_detection(disc_out_2, ONES)
-        det_loss3 = loss_detection(disc_out_1_fake, ZEROS)
-        det_loss4 = loss_detection(disc_out_2_fake, ZEROS)
+        # det_loss1 = loss_detection(disc_out_1, ONES)
+        # det_loss2 = loss_detection(disc_out_2, ONES)
+        # det_loss3 = loss_detection(disc_out_1_fake, ZEROS)
+        # det_loss4 = loss_detection(disc_out_2_fake, ZEROS)
         
         disc_out_1 = torch.argmax(disc_out_1, dim = 1)
         disc_out_2 = torch.argmax(disc_out_2, dim = 1)
         disc_out_1_fake = torch.argmax(disc_out_1_fake, dim = 1)
         disc_out_2_fake = torch.argmax(disc_out_2_fake, dim = 1)
         
-        acc1 = (sum(disc_out_1 == ONES).item())/disc_out_1.shape[0]
-        acc2 = (sum(disc_out_2 == ONES).item())/disc_out_2.shape[0]
-        acc3 = (sum(disc_out_1_fake == ZEROS).item())/disc_out_1_fake.shape[0]
-        acc4 = (sum(disc_out_1_fake == ZEROS).item())/disc_out_1_fake.shape[0]
+        acc1 = (sum(disc_out_1 == ZEROS).item())/disc_out_1.shape[0]
+        acc2 = (sum(disc_out_2 == ZEROS).item())/disc_out_2.shape[0]
+        acc3 = (sum(disc_out_1_fake == ONES).item())/disc_out_1_fake.shape[0]
+        acc4 = (sum(disc_out_1_fake == ONES).item())/disc_out_1_fake.shape[0]
         acc = np.mean([acc1, acc2, acc3, acc4])
         
-        loss = det_loss1 + det_loss2 + det_loss3 + det_loss4
         
-        return loss, acc
+        
+        return tot_gen_loss, tot_disc_loss, acc
     
     def Single_pass_complete(self, input_1, input_2, gt_mask):
         input_2 = torch.unsqueeze((input_2), dim = 1)
@@ -206,11 +237,17 @@ class Run_Model():
     def Regularization_Loop(self, num_epochs, base_lr, train_loader, val_loader):
         save_encoder12 = 'Encoder2D.pth'
         save_encoder22 = 'Encoder3D.pth'
+        save_disc12 = 'Discriminator1.pth'
+        save_disc22 = 'Discriminator2.pth'
 
         self.encoder_2d.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_encoder12)))
         self.encoder_3d.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_encoder22)))
         
-        optimizer = torch.optim.AdamW(list(self.encoder_2d.parameters()) + list(self.encoder_3d.parameters()) + list(self.discriminator1.parameters()) + list(self.discriminator2.parameters()), lr = base_lr, weight_decay = 1e-5)
+        #self.discriminator1.load_state_dict(torch.load(os.path.join(self.weight_save_path[1], save_disc12)))
+        #self.discriminator2.load_state_dict(torch.load(os.path.join(self.weight_save_path[1], save_disc22)))
+        
+        optimizer_gen = torch.optim.AdamW(list(self.encoder_2d.parameters()) + list(self.encoder_3d.parameters()), lr = base_lr, weight_decay = 1e-5)
+        optimizer_disc = torch.optim.AdamW(list(self.discriminator1.parameters()) + list(self.discriminator2.parameters()), lr = base_lr, weight_decay = 1e-5)
         
         acc_latch = 0
         
@@ -223,18 +260,25 @@ class Run_Model():
             train_loss = []
             train_acc = []
             
-            for sample in train_loader:
+            for sample in tqdm(train_loader):
                 input1, input2, gt_masks = sample
                 input1, input2, gt_masks = input1.cuda(), input2.cuda(), gt_masks.cuda()
                 
-                optimizer.zero_grad()
-                loss, acc = self.Single_pass_regularization(input1.float(), input2.float())
+                optimizer_gen.zero_grad()
+                optimizer_disc.zero_grad()
+                tot_gen_loss, tot_disc_loss, acc = self.Single_pass_regularization(input1.float(), input2.float(), optimizer_gen, optimizer_disc)
                 #print('Acc: ', acc)
-                loss.backward()
-                optimizer.step()
                 
-                train_loss.append(loss.item())
-                train_acc.append(acc.detach().cpu().numpy())
+                # tot_disc_loss.backward()
+                # optimizer_disc.step()
+                
+                # tot_gen_loss.backward()
+                # optimizer_gen.step()
+                
+                
+                tl = tot_disc_loss.item() + tot_gen_loss.item()
+                train_loss.append(tl)
+                train_acc.append(acc)
                 
             print('Regularization Train Loss: ', np.mean(train_loss))
             print('Regularization Train accuracy: ', np.mean(train_acc))
@@ -255,7 +299,7 @@ class Run_Model():
                     loss, acc = self.Single_pass_regularization(input1.float(), input2.float())
                 
                 val_loss.append(loss.item())
-                val_acc.append(acc.detach().cpu().numpy())
+                val_acc.append(acc)
                 
             print('Regularization Validation Loss: ', np.mean(val_loss))
             print('Regularization Validation accuracy: ', np.mean(val_acc))
