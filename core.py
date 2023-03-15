@@ -39,15 +39,19 @@ class Run_Model():
         
         return loss, metrics
     
-    def Single_pass_regularization(self, input_1, input_2, optimizer_gen, optimizer_disc):
+    def Single_pass_regularization(self, input_1, input_2, optimizer_gen, optimizer_disc, mode):
         EPS = 1e-15
         Tensor = torch.cuda.FloatTensor
         input_2 = torch.unsqueeze((input_2), dim = 1)
         
         self.encoder_2d.eval()
         self.encoder_3d.eval()
-        self.discriminator1.train()
-        self.discriminator2.train()
+        if mode == 'train':
+            self.discriminator1.train()
+            self.discriminator2.train()
+        else:
+            self.discriminator1.eval()
+            self.discriminator2.eval()
         
         out_2d = self.encoder_2d(input_1)
         out_3d = self.encoder_3d(input_2)
@@ -60,14 +64,26 @@ class Run_Model():
         disc_out_1 = self.discriminator1(z)
         disc_out_2 = self.discriminator2(z)
         
+        #print('first part: ', torch.log(disc_out_1 + EPS))
+        #print('second part: ', torch.log(1 - disc_out_1_fake + EPS))
         D_loss_1 = -torch.mean(torch.log(disc_out_1 + EPS) + torch.log(1 - disc_out_1_fake + EPS))
         D_loss_2 = -torch.mean(torch.log(disc_out_2 + EPS) + torch.log(1 - disc_out_2_fake + EPS))
+        #print('disc 1: ', D_loss_1.item())
+        #print('disc 2: ', D_loss_2.item())
         tot_disc_loss = D_loss_1 + D_loss_2
-        tot_disc_loss.backward()
-        optimizer_disc.step()
+        #print('tot disc loss: ', tot_disc_loss.item())
+        if mode == 'train':
+            optimizer_disc.zero_grad()
+            tot_disc_loss.backward()
+            optimizer_disc.step()
         
-        self.encoder_2d.train()
-        self.encoder_3d.train()
+        if mode == 'train':
+            self.encoder_2d.train()
+            self.encoder_3d.train()
+        else:
+            self.encoder_2d.eval()
+            self.encoder_3d.eval()
+            
         self.discriminator1.eval()
         self.discriminator2.eval()
         
@@ -80,8 +96,11 @@ class Run_Model():
         G_loss_1 = -torch.mean(torch.log(disc_out_1_fakee + EPS))
         G_loss_2 = -torch.mean(torch.log(disc_out_2_fakee + EPS))
         tot_gen_loss = G_loss_1 + G_loss_2
-        tot_gen_loss.backward()
-        optimizer_gen.step()
+        #print('tot gen loss: ', tot_gen_loss.item())
+        if mode == 'train':
+            optimizer_gen.zero_grad()
+            tot_gen_loss.backward()
+            optimizer_gen.step()
         
         ONES = Variable(Tensor(input_1.shape[0], 1).fill_(1.0), requires_grad=False).long()
         ZEROS = Variable(Tensor(input_1.shape[0], 1).fill_(0.0), requires_grad=False).long()
@@ -264,9 +283,9 @@ class Run_Model():
                 input1, input2, gt_masks = sample
                 input1, input2, gt_masks = input1.cuda(), input2.cuda(), gt_masks.cuda()
                 
-                optimizer_gen.zero_grad()
-                optimizer_disc.zero_grad()
-                tot_gen_loss, tot_disc_loss, acc = self.Single_pass_regularization(input1.float(), input2.float(), optimizer_gen, optimizer_disc)
+                #optimizer_gen.zero_grad()
+                #optimizer_disc.zero_grad()
+                tot_gen_loss, tot_disc_loss, acc = self.Single_pass_regularization(input1.float(), input2.float(), optimizer_gen, optimizer_disc, 'train')
                 #print('Acc: ', acc)
                 
                 # tot_disc_loss.backward()
@@ -296,9 +315,10 @@ class Run_Model():
                 input1, input2, gt_masks = input1.cuda(), input2.cuda(), gt_masks.cuda()
                 
                 with torch.no_grad():
-                    loss, acc = self.Single_pass_regularization(input1.float(), input2.float())
+                    tot_gen_loss, tot_disc_loss, acc = self.Single_pass_regularization(input1.float(), input2.float(), optimizer_gen, optimizer_disc, 'val')
                 
-                val_loss.append(loss.item())
+                tl = tot_disc_loss.item() + tot_gen_loss.item()
+                val_loss.append(tl)
                 val_acc.append(acc)
                 
             print('Regularization Validation Loss: ', np.mean(val_loss))
