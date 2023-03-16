@@ -27,8 +27,8 @@ data_len = len(total_data)
 print('Data len: ', data_len)
 print('Train len: ', data_len - 15)
 
-train_data = total_data[0:data_len-15]
-validation_data = total_data[data_len-15:data_len]
+train_data = total_data[0:data_len-35]
+validation_data = total_data[data_len-35:data_len-20]
 
 train_set = Prepare_dataset(train_data, slices = 5)
 validation_set = Prepare_dataset(validation_data, slices = 5)
@@ -61,7 +61,7 @@ trainer = Run_Model(weight_save_path, record_save_path, encoder_2d, encoder_3d, 
 
 if __name__ == '__main__':
     #trainer.train_loop(15, base_lr, Train_loader, Validation_loader)
-    trainer.Regularization_Loop(8, base_lr, Train_loader, Validation_loader)
+    #trainer.Regularization_Loop(10, base_lr, Train_loader, Validation_loader)
     trainer.Combined_loop(100, base_lr, Train_loader, Validation_loader)
 
 
