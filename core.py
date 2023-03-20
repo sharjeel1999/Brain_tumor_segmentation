@@ -31,13 +31,13 @@ class Run_Model():
         
         dec_out = self.decoder(combined_features)
         #print('gt mask: ', gt_mask.shape, torch.unique(gt_mask))
-        loss, dsc, iou = loss_segmentation(dec_out, gt_mask)
+        seg_loss, dsc, class_dsc, ious, class_iou, tc_score, whole_scores = loss_segmentation(dec_out, gt_mask)
         
         metrics = {}
         metrics['dice'] = dsc
-        metrics['iou'] = iou
+        metrics['iou'] = ious
         
-        return loss, metrics
+        return seg_loss, metrics
     
     def Single_pass_regularization_second(self, input_1, input_2, optimizer_gen, optimizer_disc, mode):
         EPS = 1e-15
@@ -292,7 +292,8 @@ class Run_Model():
             self.discriminator2.eval()
         
         z = nn.Parameter(Tensor(np.random.normal(0, 1, (input_1.shape[0], out_2d.shape[1], out_2d.shape[2], out_2d.shape[3]))), requires_grad=False).cuda()
-        #print('out 2d shape: ', out_2d.shape)
+        # if mode == 'val':
+        #     print('out 2d shape: ', out_2d.shape)
         disc_out_1_fake = self.discriminator1(out_2d.detach())
         disc_out_2_fake = self.discriminator2(out_3d.detach())
         
@@ -547,7 +548,7 @@ class Run_Model():
         
         dice_latch = 0
         
-        for epoch in range(num_epochs):
+        for epoch in range(0, num_epochs):
             self.encoder_2d.train()
             self.encoder_3d.train()
             self.discriminator1.train()
@@ -568,21 +569,22 @@ class Run_Model():
                 input1, input2, gt_masks = sample
                 input1, input2, gt_masks = input1.cuda(), input2.cuda(), gt_masks.cuda()
                 
-                loss, dice, class_dsc, iou, class_iou, tc_score, whole_scores = self.Single_pass_complete(input1.float(), input2.float(), gt_masks.long(), optimizer_gen, optimizer_disc, 'train')
-                
-                class_dsc[class_dsc == 0] = np.nan
-                class_iou[class_iou == 0] = np.nan
-                
-                train_loss.append(loss.item())
-                train_dice.append(dice.detach().cpu().numpy())
-                train_iou.append(iou.detach().cpu().numpy())
-                #print(np.array(class_dsc.detach().cpu().numpy()))
-                train_class_dice.append(np.array(class_dsc.detach().cpu().numpy()))
-                train_class_iou.append(np.array(class_iou.detach().cpu().numpy()))
-                train_tc_dice.append(tc_score[0].detach().cpu().numpy())
-                train_tc_iou.append(tc_score[1].detach().cpu().numpy())
-                train_whole_dice.append(whole_scores[0].detach().cpu().numpy())
-                train_whole_iou.append(whole_scores[1].detach().cpu().numpy())
+                if input1.shape[0] > 1:
+                    loss, dice, class_dsc, iou, class_iou, tc_score, whole_scores = self.Single_pass_complete(input1.float(), input2.float(), gt_masks.long(), optimizer_gen, optimizer_disc, 'train')
+                    
+                    class_dsc[class_dsc == 0] = np.nan
+                    class_iou[class_iou == 0] = np.nan
+                    
+                    train_loss.append(loss.item())
+                    train_dice.append(dice.detach().cpu().numpy())
+                    train_iou.append(iou.detach().cpu().numpy())
+                    #print(np.array(class_dsc.detach().cpu().numpy()))
+                    train_class_dice.append(np.array(class_dsc.detach().cpu().numpy()))
+                    train_class_iou.append(np.array(class_iou.detach().cpu().numpy()))
+                    train_tc_dice.append(tc_score[0].detach().cpu().numpy())
+                    train_tc_iou.append(tc_score[1].detach().cpu().numpy())
+                    train_whole_dice.append(whole_scores[0].detach().cpu().numpy())
+                    train_whole_iou.append(whole_scores[1].detach().cpu().numpy())
             
             train_class_dice = np.array(train_class_dice)
             print('class dice shape: ', train_class_dice.shape)
@@ -611,21 +613,23 @@ class Run_Model():
                 input1, input2, gt_masks = sample
                 input1, input2, gt_masks = input1.cuda(), input2.cuda(), gt_masks.cuda()
                 
-                with torch.no_grad():
-                    loss, dice, class_dsc, iou, class_iou, tc_score, whole_scores = self.Single_pass_complete(input1.float(), input2.float(), gt_masks.long(), optimizer_gen, optimizer_disc, 'val')
-                
-                class_dsc[class_dsc == 0] = np.nan
-                class_iou[class_iou == 0] = np.nan
-                
-                val_loss.append(loss.item())
-                val_dice.append(dice.detach().cpu().numpy())
-                val_iou.append(iou.detach().cpu().numpy())
-                val_class_dice.append(np.array(class_dsc.detach().cpu().numpy()))
-                val_class_iou.append(np.array(class_iou.detach().cpu().numpy()))
-                val_tc_dice.append(tc_score[0].detach().cpu().numpy())
-                val_tc_iou.append(tc_score[1].detach().cpu().numpy())
-                val_whole_dice.append(whole_scores[0].detach().cpu().numpy())
-                val_whole_iou.append(whole_scores[1].detach().cpu().numpy())
+                if input1.shape[0] > 1:
+                    #print(input1.shape)
+                    with torch.no_grad():
+                        loss, dice, class_dsc, iou, class_iou, tc_score, whole_scores = self.Single_pass_complete(input1.float(), input2.float(), gt_masks.long(), optimizer_gen, optimizer_disc, 'val')
+                    
+                    class_dsc[class_dsc == 0] = np.nan
+                    class_iou[class_iou == 0] = np.nan
+                    
+                    val_loss.append(loss.item())
+                    val_dice.append(dice.detach().cpu().numpy())
+                    val_iou.append(iou.detach().cpu().numpy())
+                    val_class_dice.append(np.array(class_dsc.detach().cpu().numpy()))
+                    val_class_iou.append(np.array(class_iou.detach().cpu().numpy()))
+                    val_tc_dice.append(tc_score[0].detach().cpu().numpy())
+                    val_tc_iou.append(tc_score[1].detach().cpu().numpy())
+                    val_whole_dice.append(whole_scores[0].detach().cpu().numpy())
+                    val_whole_iou.append(whole_scores[1].detach().cpu().numpy())
                 
             print('Combined Validation Loss: ', np.mean(val_loss))
             print('Combined Validation mean dice: ', np.mean(val_dice))
@@ -670,18 +674,104 @@ class Run_Model():
                 
                 dice_latch = np.mean(val_dice)
             
+            print('save path: ', self.record_save_path[2])
             with open(self.record_save_path[2], 'a') as f:
+                f.write(f'Epoch: {epoch}')
+                f.write('\n')
                 f.write(f'Train Loss: {np.mean(train_loss)} Train Dice: {np.mean(train_dice)} Train IoU: {np.mean(train_iou)}')
                 f.write('\n')
-                f.write(f'Train class dice: {np.mean(train_class_dice)} Train class iou: {np.mean(train_class_iou)}')
+                f.write(f'Train NET, Edema, ET dice: {np.nanmean(train_class_dice)} Train NET, Edema, ET iou: {np.nanmean(train_class_iou)}')
+                f.write('\n')
+                f.write(f'Train TC dice: {np.mean(train_tc_dice)} Train TC iou: {np.mean(train_tc_iou)}')
                 f.write('\n')
                 f.write(f'Train whole dice: {np.mean(train_whole_dice)} Train whole iou: {np.mean(train_whole_iou)}')
                 f.write('\n')
+                
                 f.write(f'Validation Loss: {np.mean(val_loss)} Validation Dice: {np.mean(val_dice)} Validation IoU: {np.mean(val_iou)}')
                 f.write('\n')
-                f.write(f'Validation class dice: {np.mean(val_class_dice)} Validation class iou: {np.mean(val_class_iou)}')
+                f.write(f'Validation NET, Edema, ET dice: {np.nanmean(val_class_dice)} Validation NET, Edema, ET iou: {np.nanmean(val_class_iou)}')
+                f.write('\n')
+                f.write(f'Validation TC dice: {np.mean(val_tc_dice)} Validation TC iou: {np.mean(val_tc_iou)}')
                 f.write('\n')
                 f.write(f'Validation whole dice: {np.mean(val_whole_dice)} Validation whole iou: {np.mean(val_whole_iou)}')
                 f.write('\n')
                 f.write('\n')
         
+    def dynamic_slicer(self, t1ce_volume, flair_volume, prev_mask_volume, gt_mask_volume, slices, selected_ind):
+        start = int(selected_ind - ((slices - 1)/2))
+        end = int(selected_ind + ((slices - 1)/2) + 1)
+        
+        max_depth = t1ce_volume.shape[2]
+        
+        input1 = []
+        input2 = []
+        gt_masks = []
+        
+        for z in range(start, end):
+            
+            if z < 0:
+                z = 0
+            if z > max_depth:
+                z = max_depth
+            
+            t1ce_slice = t1ce_volume[:, :, z]
+            flair_slice = flair_volume[:, :, z]
+            pred_mask_slice = prev_mask_volume[:, :, z]
+            gt_mask_slice = gt_mask_volume[:, :, z]
+            
+            #t1ce_slice = self.preprocess(t1ce_slice)
+            
+            input1.append(t1ce_slice)
+            input1.append(flair_slice)
+            
+            if z < selected_ind:
+                input2.append(t1ce_slice)
+                input2.append(flair_slice)
+                input2.append(pred_mask_slice)
+            
+            if z == selected_ind:
+                input2.append(t1ce_slice)
+                input2.append(flair_slice)
+                gt_masks.append(gt_mask_slice)
+        
+        
+        input1 = np.array(input1)
+        input2 = np.array(input2)
+        gt_masks = np.array(gt_masks)
+        
+        input1 = np.transpose(input1, (1, 2, 0))
+        input2 = np.transpose(input2, (1, 2, 0))
+        gt_masks = np.transpose(gt_masks, (1, 2, 0))
+        
+        return input1, input2, gt_masks
+    
+    def testing_whole_samples(self, test_loader, slices):
+        save_encoder12 = 'Encoder2D.pth'
+        save_encoder22 = 'Encoder3D.pth'
+        #save_discriminator12 = 'Discriminator1.pth'
+        #save_discriminator22 = 'Discriminator2.pth'
+        save_decoder2 = 'Decoder.pth'
+        
+        self.encoder_2d.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_encoder12)))
+        self.encoder_3d.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_encoder22)))
+        #self.discriminator1.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_discriminator12)))
+        #self.discriminator2.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_discriminator22)))
+        self.decoder.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_decoder2)))
+        
+        self.encoder_2d.eval()
+        self.encoder_3d.eval()
+        self.decoder.eval()
+        
+        for sample in test_loader:
+            t1ce, flair, gt_mask = sample
+            
+            vol_depth = t1ce.shape[1]
+            
+            prediction_volume = torch.zeros_like(t1ce)
+            
+            for itter in range(vol_depth):
+                input1, input2, gt_masks = self.dynamic_slicer(t1ce, flair, prediction_volume, gt_mask, slices, itter)
+                
+                
+                
+                
