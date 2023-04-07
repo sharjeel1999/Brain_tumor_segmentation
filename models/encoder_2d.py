@@ -13,6 +13,8 @@ class DoubleConv(nn.Module):
             nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(mid_channels),
             nn.ReLU(inplace=True),
+            
+            
             nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
@@ -21,6 +23,50 @@ class DoubleConv(nn.Module):
     def forward(self, x):
         return self.double_conv(x)
 
+
+class DoubleConv_new(nn.Module):
+    def __init__(self, in_channels, out_channels, mid_channels=None):
+        super().__init__()
+        if not mid_channels:
+            mid_channels = out_channels
+            
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(mid_channels),
+            nn.LeakyReLU(inplace=True),
+            
+            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(mid_channels),
+            nn.LeakyReLU(inplace=True),
+        )
+        
+        self.double_conv = nn.Sequential(
+            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(mid_channels),
+            nn.LeakyReLU(inplace=True),
+            
+            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(mid_channels),
+            nn.LeakyReLU(inplace=True),
+        )
+        
+        self.end_conv = nn.Sequential(
+            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(mid_channels),
+            nn.LeakyReLU(inplace=True),
+            
+            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        x1 = self.conv1(x)
+        x2 = self.double_conv(x1)
+        x = x1 + x2
+        x = self.end_conv(x)
+        
+        return x
 
 class Down(nn.Module):
 
@@ -74,12 +120,13 @@ class UNet_2D(nn.Module):
         super(UNet_2D, self).__init__()
         self.n_channels = n_channels
         self.bilinear = bilinear
-
-        self.inc = (DoubleConv(n_channels, 64))
-        self.down1 = (Down(64, 128))
-        self.down2 = (Down(128, 256))
-        self.down3 = (Down(256, 512))
-        self.down4 = (Down(512, 1024))
+        self.dout = nn.Dropout2d(0.05)
+        
+        self.inc = DoubleConv(n_channels, 64)
+        self.down1 = Down(64, 128)
+        self.down2 = Down(128, 256)
+        self.down3 = Down(256, 512)
+        self.down4 = Down(512, 1024)
         # factor = 2 if bilinear else 1
         # self.down4 = (Down(512, 1024 // factor))
         # self.up1 = (Up(1024, 512 // factor, bilinear))
@@ -90,13 +137,21 @@ class UNet_2D(nn.Module):
 
     def forward(self, x):
         x1 = self.inc(x)
-        x2 = self.down1(x1)
+        #print('x1: ', x1.shape)
+        x2 = self.dout(self.down1(x1))
+        #print('x2: ', x2.shape)
         x3 = self.down2(x2)
-        x4 = self.down3(x3)
+        #print('x3: ', x3.shape)
+        x4 = self.dout(self.down3(x3))
+        #print('x4: ', x4.shape)
         x5 = self.down4(x4)
+        #print('x5: ', x5.shape)
         # x = self.up1(x5, x4)
         # x = self.up2(x, x3)
         # x = self.up3(x, x2)
         # x = self.up4(x, x1)
         # logits = self.outc(x)
-        return x5
+        
+        x5_flat = torch.flatten(x5, start_dim = 1)
+        #print('enc 2d out shape: ', x5.shape)
+        return [x5, x4, x3, x2, x1]
