@@ -3,7 +3,7 @@ import torch.nn as nn
 import random
 import numpy as np
 import os
-from utils import loss_segmentation, loss_detection, dice_coeff, class_dice, test_scores_3d, dice_3d
+from utils import loss_segmentation, loss_detection, dice_coeff, class_dice, test_scores_3d, dice_3d, hausdorf_distance, other_metrics
 from torch.autograd import Variable
 import time
 from tqdm import tqdm
@@ -181,7 +181,7 @@ class Run_Model():
         det_loss1 = loss_detection(disc_out_1_fakee, ONES)
         det_loss2 = loss_detection(disc_out_2_fakee, ONES)
         
-        tot_gen_loss = 0.2*(det_loss1 + det_loss2) + seg_loss
+        tot_gen_loss = 0.1*(det_loss1 + det_loss2) + 0.9*seg_loss
         
         if mode == 'train':
             optimizer_gen.zero_grad()
@@ -197,8 +197,21 @@ class Run_Model():
             self.discriminator1.eval()
             self.discriminator2.eval()
         
-        z2d = nn.Parameter(Tensor(np.random.normal(0, 1, (input_1.shape[0], out_2d.shape[1], out_2d.shape[2], out_2d.shape[3]))), requires_grad=False).cuda()
-        z3d = nn.Parameter(Tensor(np.random.normal(0, 1, (input_1.shape[0], out_3d.shape[1], out_3d.shape[2], out_3d.shape[3], out_3d.shape[4]))), requires_grad=False).cuda()
+        # z2d = nn.Parameter(Tensor(np.random.normal(0, 1, (input_1.shape[0], out_2d.shape[1], out_2d.shape[2], out_2d.shape[3]))), requires_grad=False).cuda()
+        # z3d = nn.Parameter(Tensor(np.random.normal(0, 1, (input_1.shape[0], out_3d.shape[1], out_3d.shape[2], out_3d.shape[3], out_3d.shape[4]))), requires_grad=False).cuda()
+        
+        z2d = Tensor(np.zeros((input_1.shape[0], out_2d.shape[1], out_2d.shape[2], out_2d.shape[3])))
+        z3d = Tensor(np.zeros((input_1.shape[0], out_3d.shape[1], out_3d.shape[2], out_3d.shape[3], out_3d.shape[4])))
+        
+        for k in range(input_1.shape[0]):
+            z2d[k, :, :, :] = Tensor(np.zeros((out_2d.shape[1], out_2d.shape[2], out_2d.shape[3])))
+            z3d[k, :, :, :, :] = Tensor(np.zeros((out_3d.shape[1], out_3d.shape[2], out_3d.shape[3], out_3d.shape[4])))
+        
+        z2d = nn.Parameter(z2d, requires_grad=True).cuda()
+        z3d = nn.Parameter(z3d, requires_grad=True).cuda()
+        
+        # print('normalized 2d shape: ', z2d.shape)
+        # print('normalized 3d shape: ', z3d.shape)
         
         disc_out_1_fake = self.discriminator1(out_2d.detach())
         disc_out_2_fake = self.discriminator2(out_3d.detach())
@@ -258,13 +271,13 @@ class Run_Model():
             #print('dynamic all shapes: ', t1ce_volume.shape, flair_volume.shape, gt_mask_volume.shape)
             #t1_slice = t1_volume[:,z, :, :]
             t1ce_slice = t1ce_volume[:,z, :, :]
-            #t2_slice = t2_volume[:,z, :, :]
+            # t2_slice = t2_volume[:,z, :, :]
             flair_slice = flair_volume[:, z, :, :]
             gt_mask_slice = gt_mask_volume[:, z, :, :]
             
             #input2[:, 0, k, :, :] = t1_slice
             input2[:, 0, k, :, :] = t1ce_slice
-            #input2[:, 2, k, :, :] = t2_slice
+            # input2[:, 1, k, :, :] = t2_slice
             input2[:, 1, k, :, :] = flair_slice
             
             if z == selected_ind and ent == False:
@@ -272,7 +285,7 @@ class Run_Model():
                 #print('start, end: ', start, end)
                 #input1[:, 0, :, :] = t1_slice
                 input1[:, 0, :, :] = t1ce_slice
-                #input1[:, 2, :, :] = t2_slice
+                # input1[:, 1, :, :] = t2_slice
                 input1[:, 1, :, :] = flair_slice
                 gt_masks[:, 0, :, :] = gt_mask_slice
                 ent = True
@@ -459,19 +472,23 @@ class Run_Model():
                 f.write('\n')
                 f.write('\n')
     
-    def train_loop_mixed(self, num_epochs, base_lr, train_loader, val_loader):
+    def train_loop_mixed(self, num_epochs, base_lr, train_loader, val_loader, sb):
         dice_latch = 0
         slices = 5
         
-        save_encoder12 = 'Encoder2D.pth'
-        save_encoder22 = 'Encoder3D.pth'
-        save_decoder2 = 'Decoder.pth'
-        
+        save_encoder12 = 'Encoder2D' + str(sb) +'.pth'
+        save_encoder22 = 'Encoder3D' + str(sb) +'.pth'
+        save_decoder2 = 'Decoder' + str(sb) +'.pth'
+        if sb == 6:
+            se = 0
+        else:
+            se = 0
+        print('starting epoch: ', se)
         self.encoder_2d.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_encoder12)))
         self.encoder_3d.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_encoder22)))
         self.decoder.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_decoder2)))
         
-        for epoch in range(7, num_epochs):
+        for epoch in range(se, num_epochs):
             train_loss = []
             train_dice = []
             train_iou = []
@@ -577,22 +594,22 @@ class Run_Model():
             print('\n')
             
             if dice_latch < np.mean(val_dice):
-                save_encoder1 = 'Encoder2D_' + str(np.mean(val_dice)) + '.pth'
-                save_encoder12 = 'Encoder2D.pth'
+                #save_encoder1 = 'Encoder2D_' + str(np.mean(val_dice)) + '.pth'
+                save_encoder12 = 'Encoder2D_' + str(sb) + '.pth'
                 
-                save_encoder2 = 'Encoder3D_' + str(np.mean(val_dice)) + '.pth'
-                save_encoder22 = 'Encoder3D.pth'
+                #save_encoder2 = 'Encoder3D_' + str(np.mean(val_dice)) + '.pth'
+                save_encoder22 = 'Encoder3D_' + str(sb) + '.pth'
                 
-                save_decoder = 'Decoder_' + str(np.mean(val_dice)) + '.pth'
-                save_decoder2 = 'Decoder.pth'
+                #save_decoder = 'Decoder_' + str(np.mean(val_dice)) + '.pth'
+                save_decoder2 = 'Decoder_' + str(sb) + '.pth'
                 
-                torch.save(self.encoder_2d.state_dict(), os.path.join(self.weight_save_path[0], save_encoder1))
+                #torch.save(self.encoder_2d.state_dict(), os.path.join(self.weight_save_path[0], save_encoder1))
                 torch.save(self.encoder_2d.state_dict(), os.path.join(self.weight_save_path[0], save_encoder12))
                 
-                torch.save(self.encoder_3d.state_dict(), os.path.join(self.weight_save_path[0], save_encoder2))
+                #torch.save(self.encoder_3d.state_dict(), os.path.join(self.weight_save_path[0], save_encoder2))
                 torch.save(self.encoder_3d.state_dict(), os.path.join(self.weight_save_path[0], save_encoder22))
                 
-                torch.save(self.decoder.state_dict(), os.path.join(self.weight_save_path[0], save_decoder))
+                #torch.save(self.decoder.state_dict(), os.path.join(self.weight_save_path[0], save_decoder))
                 torch.save(self.decoder.state_dict(), os.path.join(self.weight_save_path[0], save_decoder2))
                 
                 dice_latch = np.mean(val_dice)
@@ -719,18 +736,18 @@ class Run_Model():
                 f.write('\n')
             
     
-    def Combined_loop(self, num_epochs, base_lr, train_loader, val_loader):
-        save_encoder12 = 'Encoder2D.pth'
-        save_encoder22 = 'Encoder3D.pth'
-        save_discriminator12 = 'Discriminator1.pth'
-        save_discriminator22 = 'Discriminator2.pth'
-        save_decoder2 = 'Decoder.pth'
+    def Combined_loop(self, num_epochs, base_lr, train_loader, val_loader, sb):
+        save_encoder12 = 'Encoder2D' + str(sb) +'.pth'
+        save_encoder22 = 'Encoder3D' + str(sb) +'.pth'
+        save_decoder2 = 'Decoder' + str(sb) +'.pth'
+        save_discriminator12 = 'Discriminator1' + str(sb) +'.pth'
+        save_discriminator22 = 'Discriminator2' + str(sb) +'.pth'
         
-        self.encoder_2d.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_encoder12)))
-        self.encoder_3d.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_encoder22)))
-        self.discriminator1.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_discriminator12)))
-        self.discriminator2.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_discriminator22)))
-        self.decoder.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_decoder2)))
+        self.encoder_2d.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_encoder12)))
+        self.encoder_3d.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_encoder22)))
+        # self.discriminator1.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_discriminator12)))
+        # self.discriminator2.load_state_dict(torch.load(os.path.join(self.weight_save_path[2], save_discriminator22)))
+        self.decoder.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_decoder2)))
         
         optimizer_gen = torch.optim.Adam(list(self.encoder_2d.parameters()) + list(self.encoder_3d.parameters()) + list(self.decoder.parameters()), lr = base_lr, weight_decay = 1e-5)
         optimizer_disc = torch.optim.Adam(list(self.discriminator1.parameters()) + list(self.discriminator2.parameters()), lr = base_lr, weight_decay = 1e-5)
@@ -739,7 +756,7 @@ class Run_Model():
         dice_latch = 0
         slices = 5
         
-        for epoch in range(2, num_epochs):
+        for epoch in range(0, num_epochs):
             self.encoder_2d.train()
             self.encoder_3d.train()
             self.discriminator1.train()
@@ -836,34 +853,34 @@ class Run_Model():
             print('Combined Validation whole iou: ', np.mean(val_whole_iou))
             
             if dice_latch < np.mean(val_dice):
-                save_encoder1 = 'Encoder2D_' + str(np.mean(val_dice)) + '.pth'
-                save_encoder12 = 'Encoder2D.pth'
+                # save_encoder1 = 'Encoder2D_' + str(np.mean(val_dice)) + '.pth'
+                save_encoder12 = 'Encoder2D' + str(sb) +'.pth'
                 
-                save_encoder2 = 'Encoder3D_' + str(np.mean(val_dice)) + '.pth'
-                save_encoder22 = 'Encoder3D.pth'
+                # save_encoder2 = 'Encoder3D_' + str(np.mean(val_dice)) + '.pth'
+                save_encoder22 = 'Encoder3D' + str(sb) +'.pth'
                 
-                save_discriminator1 = 'Discriminator1_' + str(np.mean(val_dice)) + '.pth'
-                save_discriminator12 = 'Discriminator1.pth'
+                # save_discriminator1 = 'Discriminator1_' + str(np.mean(val_dice)) + '.pth'
+                save_discriminator12 = 'Discriminator1' + str(sb) +'.pth'
                 
-                save_discriminator2 = 'Discriminator2_' + str(np.mean(val_dice)) + '.pth'
-                save_discriminator22 = 'Discriminator2.pth'
+                # save_discriminator2 = 'Discriminator2_' + str(np.mean(val_dice)) + '.pth'
+                save_discriminator22 = 'Discriminator2' + str(sb) +'.pth'
                 
-                save_decoder = 'Decoder_' + str(np.mean(val_dice)) + '.pth'
-                save_decoder2 = 'Decoder.pth'
+                # save_decoder = 'Decoder_' + str(np.mean(val_dice)) + '.pth'
+                save_decoder2 = 'Decoder' + str(sb) +'.pth'
                 
-                torch.save(self.encoder_2d.state_dict(), os.path.join(self.weight_save_path[2], save_encoder1))
+                # torch.save(self.encoder_2d.state_dict(), os.path.join(self.weight_save_path[2], save_encoder1))
                 torch.save(self.encoder_2d.state_dict(), os.path.join(self.weight_save_path[2], save_encoder12))
                 
-                torch.save(self.encoder_3d.state_dict(), os.path.join(self.weight_save_path[2], save_encoder2))
+                # torch.save(self.encoder_3d.state_dict(), os.path.join(self.weight_save_path[2], save_encoder2))
                 torch.save(self.encoder_3d.state_dict(), os.path.join(self.weight_save_path[2], save_encoder22))
                 
-                torch.save(self.discriminator1.state_dict(), os.path.join(self.weight_save_path[2], save_discriminator1))
+                # torch.save(self.discriminator1.state_dict(), os.path.join(self.weight_save_path[2], save_discriminator1))
                 torch.save(self.discriminator1.state_dict(), os.path.join(self.weight_save_path[2], save_discriminator12))
                 
-                torch.save(self.discriminator2.state_dict(), os.path.join(self.weight_save_path[2], save_discriminator2))
+                # torch.save(self.discriminator2.state_dict(), os.path.join(self.weight_save_path[2], save_discriminator2))
                 torch.save(self.discriminator2.state_dict(), os.path.join(self.weight_save_path[2], save_discriminator22))
                 
-                torch.save(self.decoder.state_dict(), os.path.join(self.weight_save_path[2], save_decoder))
+                # torch.save(self.decoder.state_dict(), os.path.join(self.weight_save_path[2], save_decoder))
                 torch.save(self.decoder.state_dict(), os.path.join(self.weight_save_path[2], save_decoder2))
                 
                 dice_latch = np.mean(val_dice)
@@ -892,14 +909,14 @@ class Run_Model():
                 f.write('\n')
         
     
-    def testing_whole_samples(self, test_loader, slices):
-        save_encoder12 = 'Encoder2D.pth'
-        save_encoder22 = 'Encoder3D.pth'
-        save_decoder2 = 'Decoder.pth'
+    def testing_whole_samples(self, test_loader, slices, sb):
+        save_encoder12 = 'Encoder2D_' + str(sb) + '.pth'
+        save_encoder22 = 'Encoder3D_' + str(sb) + '.pth'
+        save_decoder2 = 'Decoder_' + str(sb) + '.pth'
         
-        self.encoder_2d.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_encoder12)))
-        self.encoder_3d.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_encoder22)))
-        self.decoder.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_decoder2)))
+        # self.encoder_2d.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_encoder12)))
+        # self.encoder_3d.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_encoder22)))
+        # self.decoder.load_state_dict(torch.load(os.path.join(self.weight_save_path[0], save_decoder2)))
         
         self.encoder_2d.eval()
         self.encoder_3d.eval()
@@ -914,13 +931,20 @@ class Run_Model():
         test_whole_dice = []
         test_whole_iou = []
         
-        test_2d_class_dice = []
-        test_2d_class_iou = []
-        test_2d_tc_dice = []
-        test_2d_tc_iou = []
-        test_2d_wt_dice = []
-        test_2d_wt_iou = []
         t_dice = []
+        
+        hd_et = []
+        hd_tc = []
+        hd_wt = []
+        
+        sensitivity_et = []
+        sensitivity_tc = []
+        sensitivity_wt = []
+        
+        specificity_et = []
+        specificity_tc = []
+        specificity_wt = []
+        
         nn = 0
         for sample in tqdm(test_loader):
             t1_path, t1ce_path, t2_path, flair_path, t1ce, flair, gt_mask = sample
@@ -929,10 +953,14 @@ class Run_Model():
             #t1ce = torch.squeeze(t1ce, dim = 0)
             #flair = torch.squeeze(flair, dim = 0)
             #gt_mask = torch.squeeze(gt_mask, dim = 0)
-            #print('t1ce shape: ', t1ce.shape)
+            # print('t1ce shape: ', t1ce.shape)
             vol_depth = t1ce.shape[1]
             
             prediction_volume = torch.zeros_like(t1ce)
+            
+            sq = torch.squeeze(gt_mask, 0)
+            # print(sq.shape)
+            # print(torch.unique(torch.where(sq > 0)[0]))
             
             for itter in range(10, vol_depth-10, 1):
                 input1, input2, gt_masks = self.dynamic_slicer(t1ce, flair, prediction_volume, gt_mask, slices, itter)
@@ -941,25 +969,9 @@ class Run_Model():
                 with torch.no_grad():
                     loss, metrics, pred_mask = self.Single_pass_initial(input1.float(), input2.float(), gt_masks.long())
                 
-                dsc = metrics['dice']
-                ious = metrics['iou']
-                class_dsc = metrics['class_dice']
-                class_iou = metrics['class_iou']
-                tc_score = metrics['tc_scores']
-                whole_scores = metrics['whole_scores']
                 
-                test_2d_class_dice.append(np.array(class_dsc.detach().cpu().numpy()))
-                test_2d_class_iou.append(np.array(class_iou.detach().cpu().numpy()))
-                test_2d_tc_dice.append(tc_score[0].detach().cpu().numpy())
-                test_2d_tc_iou.append(tc_score[1].detach().cpu().numpy())
-                test_2d_wt_dice.append(whole_scores[0].detach().cpu().numpy())
-                test_2d_wt_iou.append(whole_scores[1].detach().cpu().numpy())
-                
-                
-                pred_mask = torch.sigmoid(pred_mask) #softmax
-                #print('uniques: ', torch.min(pred_mask), torch.max(pred_mask))
-                
-                #pred_mask[pred_mask < 0.4] = 0
+                pred_mask = torch.sigmoid(pred_mask)#, dim = 1) #softmax
+
                 fpred_mask = torch.argmax(pred_mask, dim = 1)
                 fpred_mask = torch.unsqueeze(fpred_mask, dim = 0)
                 
@@ -968,44 +980,59 @@ class Run_Model():
                 
                 et_ch = pred_mask[:, 3, :, :]
                 et_ch = torch.unsqueeze(et_ch, dim = 0)
-                # print('fpred shape: ', fpred_mask.shape, torch.unique(fpred_mask))
-                # print('et ch shape: ', et_ch.shape)
-                
-                #fpred_mask[z_ch >= 0.4] = 0
-                
-                #print('fpred/gt: ', torch.unique(fpred_mask), torch.unique(gt_masks))
-                
-                
-                #fpred_mask
+
                 prediction_volume[:, itter, :, :] = fpred_mask
-                
-                # if len(torch.unique(fpred_mask)) >= 2 or len(torch.unique(gt_masks)):
-                #     s_pred_mask = torch.squeeze(fpred_mask).detach().cpu().numpy()
-                #     s_gt_mask = torch.squeeze(gt_masks).detach().cpu().numpy()
-                #     rec = []
-                #     rec.append([t1_path, t1ce_path, t2_path, flair_path, itter])
+
+                if len(torch.unique(fpred_mask)) >= 2:# or len(torch.unique(gt_masks)) >= 1:
+                    s_pred_mask = torch.squeeze(fpred_mask).detach().cpu().numpy()
+                    s_gt_mask = torch.squeeze(gt_masks).detach().cpu().numpy()
+                    # s_image = t1ce[0, itter, :, :].detach().cpu().numpy()
+                    # print('s image shape: ', s_image.shape)
                     
-                #     #print('pred/gt  mask shape: ', s_pred_mask.shape, s_gt_mask.shape)
-                #     save_path = 'D:\\brain_tumor_segmentation\\visual_saves\\experiment_3_rough2'
-                #     name = str(nn) + '.png'
-                #     gt_name = str(nn) + '_gt.png'
-                #     image_name = str(nn) + '_image.npy'
-                #     cv2.imwrite(os.path.join(save_path, name), s_pred_mask)
-                #     cv2.imwrite(os.path.join(save_path, gt_name), s_gt_mask)
-                #     #cv2.imwrite(os.path.join(save_path, image_name), s_image)
-                #     rec = np.array(rec)
-                #     np.save(os.path.join(save_path, image_name), rec)
-                #     #print('saved ', nn)
-                #     nn += 1
+                    rec = []
+                    rec.append([t1_path, t1ce_path, t2_path, flair_path, itter])
                     
-                
-            #print('prediction shape: ', prediction_volume.shape)
-            #print('gt mask shape: ', gt_mask.shape)
+                    #print('pred/gt  mask shape: ', s_pred_mask.shape, s_gt_mask.shape)
+                    save_path = 'D:\\brain_tumor_segmentation\\visual_saves\\experiment_9'
+                    name = str(nn) + '.npy'
+                    gt_name = str(nn) + '_gt.npy'
+                    image_name = str(nn) + '_image.npy'
+                    # cv2.imwrite(os.path.join(save_path, name), s_pred_mask)
+                    # cv2.imwrite(os.path.join(save_path, gt_name), s_gt_mask)
+                    # cv2.imwrite(os.path.join(save_path, image_name), s_image)
+                    rec = np.array(rec)
+                    np.save(os.path.join(save_path, name), pred_mask.detach().cpu().numpy())
+                    np.save(os.path.join(save_path, gt_name), s_gt_mask)
+                    np.save(os.path.join(save_path, image_name), rec)
+                    #print('saved ', nn)
+                    nn += 1
+
             dice, class_dsc, iou, class_iou, tc_score, whole_scores = test_scores_3d(prediction_volume, gt_mask)
+            
+            sensitivity, specificity, false_positives, false_negatives = other_metrics(prediction_volume, gt_mask)
+            sensitivity_et.append(sensitivity[0])
+            sensitivity_tc.append(sensitivity[1])
+            sensitivity_wt.append(sensitivity[2])
+            
+            specificity_et.append(specificity[0])
+            specificity_tc.append(specificity[1])
+            specificity_wt.append(specificity[2])
+            
+            hd_dict = hausdorf_distance(prediction_volume, gt_mask)
+            hd_et.append(hd_dict['ET'])
+            hd_tc.append(hd_dict['TC'])
+            hd_wt.append(hd_dict['WT'])
+            # print('hausdorf distances: ', hd_dict['ET'], hd_dict['TC'], hd_dict['WT'])
+            
+            print('pred unique: ', torch.unique(prediction_volume))
+            print('gt unique: ', torch.unique(gt_mask))
             
             dd = dice_3d(gt_mask.long(), prediction_volume)
             t_dice.append(dd)
             print('sample dice: ', dice)
+            print('ET, TC, whole false positives: ', np.array(false_positives)/57600)
+            print('ET, TC, whole false_negatives: ', np.array(false_negatives)/57600)
+            
             test_dice.append(dice)
             test_iou.append(iou)
             test_class_dice.append(np.array(class_dsc.detach().cpu().numpy()))
@@ -1015,12 +1042,6 @@ class Run_Model():
             test_whole_dice.append(whole_scores[0].detach().cpu().numpy())
             test_whole_iou.append(whole_scores[1].detach().cpu().numpy())
             
-        # print('Combined 2D Testing NET, Edema, ET dice: ', np.mean(test_2d_class_dice, axis = 0))
-        # print('Combined 2D Testing NET, Edema, ET iou: ', np.mean(test_2d_class_iou, axis = 0))
-        # print('Combined 2D Testing TC dice: ', np.mean(test_2d_tc_dice))
-        # print('Combined 2D Testing TC iou: ', np.mean(test_2d_tc_iou))
-        # print('Combined 2D Testing whole dice: ', np.mean(test_2d_wt_dice))
-        # print('Combined 2D Testing whole iou: ', np.mean(test_2d_wt_iou))
         
         print('Combined Testing mean dice: ', np.mean(test_dice))
         print('Combined Testing mean iou: ', np.mean(test_iou))
@@ -1031,4 +1052,26 @@ class Run_Model():
         print('Combined Testing whole dice: ', np.mean(test_whole_dice))
         print('Combined Testing whole iou: ', np.mean(test_whole_iou))
         
+        print('Sensitivity ET, TC, WT: ', np.mean(sensitivity_et), np.mean(sensitivity_tc), np.mean(sensitivity_wt))
+        print('Specificity ET, TC, WT: ', np.mean(specificity_et), np.mean(specificity_tc), np.mean(specificity_wt))
+        
+        print('Testing ET hausforf: ', np.mean(hd_et))
+        print('Testing TC hausforf: ', np.mean(hd_tc))
+        print('Testing WT hausforf: ', np.mean(hd_wt))
+        
         print('test dice: ', np.mean(t_dice))
+        
+        # with open(self.record_save_path[3], 'a') as f:
+        #     f.write(f'Testing Dice: {np.mean(test_dice)} Testing IoU: {np.mean(test_iou)}')
+        #     f.write('\n')
+        #     f.write(f'Testing NET, Edema, ET dice: {np.mean(test_class_dice, axis = 0)} Testing NET, Edema, ET iou: {np.mean(test_class_iou, axis = 0)}')
+        #     f.write('\n')
+        #     f.write(f'Testing TC dice: {np.mean(test_tc_dice)} Testing TC iou: {np.mean(test_tc_iou)}')
+        #     f.write('\n')
+        #     f.write(f'Testing whole dice: {np.mean(test_whole_dice)} Testing whole iou: {np.mean(test_whole_iou)}')
+        #     f.write('\n')
+        #     f.write(f'Testing Sensitivity ET, TC, WT: {np.mean(sensitivity_et)}, {np.mean(sensitivity_tc)}, {np.mean(sensitivity_wt)}')
+        #     f.write('\n')
+        #     f.write(f'Testing hausforf ET, TC, WT: {np.mean(hd_et)}, {np.mean(hd_tc)}, {np.mean(hd_wt)}')
+        #     f.write('\n')
+            
