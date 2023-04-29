@@ -4,6 +4,7 @@ import numpy as np
 import torch.nn.functional as F
 
 from sklearn.metrics import confusion_matrix, average_precision_score
+from hausdorff import hd95
 
 def dice_loss(true, logits, eps=1e-7):
     """Computes the Sørensen–Dice loss.
@@ -257,7 +258,7 @@ def prec_rec(pred, gt):
     
     iou = (tp)/(tp + fp + fn)
     
-    return prec, recall, specificity, accuracy, iou
+    return prec, recall, specificity, accuracy, iou, fp, fn
 
 def other_metrics(pred, target):
     
@@ -267,7 +268,7 @@ def other_metrics(pred, target):
     pred_et[pred_et == 3] = 1
     target_et[target_et != 3] = 0
     target_et[target_et == 3] = 1
-        
+    prec_et, recall_et, specificity_et, acc_et, _, fp_et, fn_et = prec_rec(pred_et.detach().cpu().numpy(), target_et.detach().cpu().numpy())
     
     pred_tc = pred.clone()
     target_tc = target.clone()
@@ -275,12 +276,15 @@ def other_metrics(pred, target):
     pred_tc[pred_tc == 2] = 0
     target_tc[target_tc == 3] = 1
     target_tc[target_tc == 2] = 0
-    
+    prec_tc, recall_tc, specificity_tc, acc_tc, _, fp_tc, fn_tc = prec_rec(pred_tc.detach().cpu().numpy(), target_tc.detach().cpu().numpy())
     
     pred_whole = pred.clone()
     target_whole = target.clone()
     pred_whole[pred_whole > 1] = 1
     target_whole[target_whole > 1] = 1
+    prec_whole, recall_whole, specificity_whole, acc_whole, _, fp_whole, fn_whole = prec_rec(pred_whole.detach().cpu().numpy(), target_whole.detach().cpu().numpy())
+    
+    return [recall_et, recall_tc, recall_whole], [specificity_et, specificity_tc, specificity_whole], [fp_et, fp_tc, fp_whole], [fn_et, fn_tc, fn_whole]
 
 def test_scores_3d(pred, target):
     #print('pred shape; ', torch.unique(pred))
@@ -306,7 +310,48 @@ def test_scores_3d(pred, target):
     
     return dsc, class_dsc, ious, class_iou, [tc_dice, tc_iou], [whole_dice, whole_iou]
 
-
+def hausdorf_distance(pred, target):
+    hd95_dict = {}
+    hd95_dict['mean'] = 0.0
+    hd95_dict['ET'] = 0.0
+    hd95_dict['TC'] = 0.0
+    hd95_dict['WT'] = 0.0
+    
+    pred_et = pred.clone()
+    target_et = target.clone()
+    pred_et[pred_et != 3] = 0
+    pred_et[pred_et == 3] = 1
+    target_et[target_et != 3] = 0
+    target_et[target_et == 3] = 1
+    
+    if len(torch.unique(pred_et)) == 2:
+        hd95_dict['ET'] = hd95(pred_et.detach().cpu().numpy(), target_et.detach().cpu().numpy())
+    else:
+        hd95_dict['ET'] = 0
+    
+    pred_tc = pred.clone()
+    target_tc = target.clone()
+    pred_tc[pred_tc == 3] = 1
+    pred_tc[pred_tc == 2] = 0
+    target_tc[target_tc == 3] = 1
+    target_tc[target_tc == 2] = 0
+    
+    if len(torch.unique(pred_tc)) == 2:
+        hd95_dict['TC'] = hd95(pred_tc.detach().cpu().numpy(), target_tc.detach().cpu().numpy())
+    else:
+        hd95_dict['TC'] = 0
+    
+    pred_whole = pred.clone()
+    target_whole = target.clone()
+    pred_whole[pred_whole > 1] = 1
+    target_whole[target_whole > 1] = 1
+    
+    if len(torch.unique(pred_whole)) == 2:
+        hd95_dict['WT'] = hd95(pred_whole.detach().cpu().numpy(), target_whole.detach().cpu().numpy())
+    else:
+        hd95_dict['WT'] = 0
+    
+    return hd95_dict
 
 def dice_3d(true, logits, eps=1e-7):
     """Computes the Sørensen–Dice loss.
@@ -343,3 +388,5 @@ def dice_3d(true, logits, eps=1e-7):
     cardinality = torch.sum(probas + true_1_hot, dims)
     dice_loss = (2. * intersection / (cardinality + eps)).mean()
     return dice_loss
+
+

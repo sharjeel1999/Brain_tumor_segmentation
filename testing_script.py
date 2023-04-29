@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import os
 
 from models import UNet, UNet_2D, UNet_3D, Discriminator, Decoder_2D, Decoder_3D, UNet_2D_red, UNet_3D_red, Decoder_3D_red, Dense_encoder_2d, Dense_encoder_3d, Dense_Decoder_2D, CRF
 from dataset import Prepare_dataset, Prepare_test_dataset, Prepare_full_volume_dataset, Data_slicer, TwoStreamBatchSampler
@@ -11,12 +12,12 @@ def set_divisions(selected, total_data, sb):
     validation = []
     testing = []
     
-    while True:
+    # while True:
         # rint = random.randint(0, 35)
         # sb = rint
-        if sb not in selected:
-            selected.append(sb)
-            break
+        # if sb not in selected:
+        #     selected.append(sb)
+        #     break
     
     for sf in range(35):
         if sf == sb:
@@ -37,39 +38,13 @@ def set_divisions(selected, total_data, sb):
     
     return training, validation, testing, selected, sb
 
+
+data_path = 'C:\\Users\\Sharjeel\\Desktop\\Brain_data_paths_array.npy'
+total_data = np.load(data_path, allow_pickle = True)
+
 batch = 8
 epochs = 100
 base_lr = 0.001
-
-# data_path = 'D:\\brain_tumor_segmentation\\rough_4\\Training_val.npy'
-# #data_path = 'C:\\Users\\Sharjeel\\Desktop\\Brain_data_paths_array.npy'
-# total_data = np.load(data_path, allow_pickle = True)
-
-# data_len = len(total_data)
-# print('Data len: ', data_len)
-# print('Train len: ', data_len - 15)
-
-# train_data = total_data[0:data_len-15]
-# validation_data = total_data[data_len-15:data_len] # 20
-
-# ''' Train data prep '''
-# train_slicer = Data_slicer(train_data, slices = 5)
-# primary_indices, secondary_indices = train_slicer.get_inds()
-
-# train_sampler = TwoStreamBatchSampler(primary_indices, secondary_indices, batch, 1)
-# train_set = Prepare_dataset(train_data, train_slicer.get_data(), slices = 5)
-
-# Train_loader = torch.utils.data.DataLoader(train_set, num_workers = 3, pin_memory = True, batch_sampler = train_sampler)
-
-# '''validation data prep '''
-# validation_slicer = Data_slicer(validation_data, slices = 5)
-# val_primary_indices, val_secondary_indices = validation_slicer.get_inds()
-
-# validation_sampler = TwoStreamBatchSampler(val_primary_indices, val_secondary_indices, batch, 1)
-# validation_set = Prepare_dataset(validation_data, validation_slicer.get_data(), slices = 5)
-
-# Validation_loader = torch.utils.data.DataLoader(validation_set, num_workers = 3, pin_memory = True, batch_sampler = validation_sampler)
-
 
 device = torch.device('cuda')
 
@@ -78,8 +53,17 @@ encoder_3d = UNet_3D(2)#.cuda()
 discriminator_1 = Discriminator(1024, 2, mode = '2D')#.cuda()
 discriminator_2 = Discriminator(1024, 2, mode = '3D')#.cuda()
 decoder = Decoder_2D(1024, 4)#.cuda() #2048
-#decoder = Decoder_3D_red(512, 4).cuda()
-#crf = CRF(2)
+
+f = 6
+save_encoder12 = 'Encoder2D' + str(f) + '.pth'
+save_encoder22 = 'Encoder3D' + str(f) + '.pth'
+save_decoder2 = 'Decoder' + str(f) + '.pth'
+
+folder_path = 'D:\\brain_tumor_segmentation\\weight_saves\\experiment_9_crossfolds_7slices\\fold0\\initial_training'
+
+encoder_2d.load_state_dict(torch.load(os.path.join(folder_path, save_encoder12)))
+encoder_3d.load_state_dict(torch.load(os.path.join(folder_path, save_encoder22)))
+decoder.load_state_dict(torch.load(os.path.join(folder_path, save_decoder2)))
 
 weight_save_path = ['D:\\brain_tumor_segmentation\\weight_saves\\experiment_8\\initial_training',
                     'D:\\brain_tumor_segmentation\\weight_saves\\experiment_8\\regularization',
@@ -98,13 +82,14 @@ trainer = Run_Model(weight_save_path, record_save_path, encoder_2d, encoder_3d, 
     # trainer.Regularization_Loop(5, base_lr, Train_loader, Validation_loader)
     # trainer.Combined_loop(20, base_lr, Train_loader, Validation_loader)
 
-
-
+selected = []
+train_data, validation_data, testing_data, selected, sb = set_divisions(selected, total_data, f)
+testing_data = testing_data[19:20]
 
 # test_path = 'D:\\brain_tumor_segmentation\\rough_4\\Testing.npy'
 # test_data = np.load(test_path, allow_pickle = True) #total_data[0:data_len]#[data_len-20:data_len]
-test_set = Prepare_test_dataset(test_data)
+test_set = Prepare_test_dataset(testing_data)
 Test_loader = torch.utils.data.DataLoader(test_set, batch_size = 1, pin_memory = True)
-trainer.testing_whole_samples(Test_loader, 7)
+trainer.testing_whole_samples(Test_loader, 7, f)
 
 
