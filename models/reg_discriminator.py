@@ -34,30 +34,53 @@ class Linear_block(nn.Module):
         x = self.block(x)
         return x
 
+class Final_linear(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        
+        self.block = nn.Sequential(
+                nn.Linear(in_channels, out_channels),
+            )
+        
+    def forward(self, x):
+        x = self.block(x)
+        return x#F.sigmoid(x)
+
 class Discriminator(nn.Module):
-    def __init__(self, in_channels, classes):
+    def __init__(self, in_channels, classes, mode):
         super().__init__()
         
         self.classes = classes
+        self.mode = mode
         
         self.conv1 = DoubleConv(in_channels, 64)
         
-    def set_layers(self, x):
+        self.sync_layer = nn.Sequential(
+                nn.Conv2d(1024*7, 1024, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(1024),
+                nn.ReLU(inplace=True)
+            )
         
-        b, f = x.shape
-        self.linear1 = Linear_block(f, 1024).cuda()
-        self.linear2 = Linear_block(1024, 512).cuda()
-        self.linear3 = Linear_block(512, 256).cuda()
-        self.linear4 = Linear_block(256, 128).cuda()
-        self.linear5 = Linear_block(128, 64).cuda()
-        self.linear6 = Linear_block(64, 32).cuda()
-        self.linear7 = Linear_block(32, self.classes).cuda()
+        #b, f = x.shape
+        self.linear1 = Linear_block(14400, 1024)#.cuda()
+        self.linear2 = Linear_block(1024, 512)#.cuda()
+        self.linear3 = Linear_block(512, 256)#.cuda()
+        self.linear4 = Linear_block(256, 128)#.cuda()
+        self.linear5 = Linear_block(128, 64)#.cuda()
+        self.linear6 = Linear_block(64, 32)#.cuda()
+        self.linear7 = Final_linear(32, self.classes)#.cuda()
     
     def forward(self, x):
+        if self.mode == '3D':
+            #print('x shape: ', x.shape)
+            B, C, Z, X, Y = x.shape
+            x = torch.reshape(x, (B, C*Z, X, Y))
+            x = self.sync_layer(x)
+        
         x = self.conv1(x)
         x = torch.flatten(x, start_dim = 1)
-        print('flatten shape: ', x.shape)
-        self.set_layers(x)
+        #print('flatten shape: ', x.shape)
+        #self.set_layers(x)
         
         x = self.linear1(x)
         x = self.linear2(x)

@@ -1,157 +1,189 @@
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch
+from torch import nn as nn
+from torch.nn import functional as F
 
-
-class DoubleConv(nn.Module):
-
-    def __init__(self, in_channels, out_channels, mid_channels=None):
-        super().__init__()
-        if not mid_channels:
-            mid_channels = out_channels
-        self.double_conv = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(mid_channels),
-            nn.ReLU(inplace=True),
-            
-            
-            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-
+class Initial_conv(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(Initial_conv, self).__init__()
+        
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size = 3, padding = 1)
+        
     def forward(self, x):
-        return self.double_conv(x)
-
-
-class DoubleConv_new(nn.Module):
-    def __init__(self, in_channels, out_channels, mid_channels=None):
-        super().__init__()
-        if not mid_channels:
-            mid_channels = out_channels
-            
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(mid_channels),
-            nn.LeakyReLU(inplace=True),
-            
-            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(mid_channels),
-            nn.LeakyReLU(inplace=True),
-        )
-        
-        self.double_conv = nn.Sequential(
-            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(mid_channels),
-            nn.LeakyReLU(inplace=True),
-            
-            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(mid_channels),
-            nn.LeakyReLU(inplace=True),
-        )
-        
-        self.end_conv = nn.Sequential(
-            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(mid_channels),
-            nn.LeakyReLU(inplace=True),
-            
-            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(inplace=True)
-        )
-
-    def forward(self, x):
-        x1 = self.conv1(x)
-        x2 = self.double_conv(x1)
-        x = x1 + x2
-        x = self.end_conv(x)
-        
+        x = self.conv(x)
         return x
 
-class Down(nn.Module):
-
+class Normal_conv(nn.Module):
     def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.maxpool_conv = nn.Sequential(
-            nn.MaxPool2d(2),
-            DoubleConv(in_channels, out_channels)
-        )
+        super(Normal_conv, self).__init__()
+        
+        num_groups = 8
+        num_channels = in_channels
 
+        if num_channels < num_groups:
+            num_groups = 1
+        
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size = 3, padding = 1)
+        # self.bn = nn.BatchNorm3d(in_channels)
+        self.bn = nn.GroupNorm(num_groups, num_channels)
+        self.act = nn.LeakyReLU()
+        
     def forward(self, x):
-        return self.maxpool_conv(x)
+        x = self.bn(x)
+        x = self.act(x)
+        x = self.conv(x)
+        return x
 
-
-class Up(nn.Module):
-
-    def __init__(self, in_channels, out_channels, bilinear=True):
-        super().__init__()
-
-        # if bilinear, use the normal convolutions to reduce the number of channels
-        if bilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
-        else:
-            self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-            self.conv = DoubleConv(in_channels, out_channels)
-
-    def forward(self, x1, x2):
-        x1 = self.up(x1)
-        diffY = x2.size()[2] - x1.size()[2]
-        diffX = x2.size()[3] - x1.size()[3]
-
-        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
-                        diffY // 2, diffY - diffY // 2])
-
-        x = torch.cat([x2, x1], dim=1)
-        return self.conv(x)
-
-
-class OutConv(nn.Module):
+class Const_Residual_block(nn.Module):
     def __init__(self, in_channels, out_channels):
-        super(OutConv, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-
-    def forward(self, x):
-        return self.conv(x)
+        super(Const_Residual_block, self).__init__()
+        
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size = 3, padding = 1)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size = 3, padding = 1)
+        
+        self.bn1 = nn.GroupNorm(8, in_channels) #nn.BatchNorm3d(in_channels)
+        self.bn2 = nn.GroupNorm(8, out_channels) #nn.BatchNorm3d(out_channels)
+        self.act = nn.LeakyReLU()
+        
+    def forward(self, x_in):
+        x = self.bn1(x_in)
+        x = self.act(x)
+        x = self.conv1(x)
+        x = self.bn2(x)
+        x = self.act(x)
+        x = self.conv2(x)
+        # print('shapes: ', x.shape, x_in.shape)
+        x = x + x_in
+        return x
     
-
-class UNet_2D(nn.Module):
-    def __init__(self, n_channels, bilinear=False):
-        super(UNet_2D, self).__init__()
-        self.n_channels = n_channels
-        self.bilinear = bilinear
-        self.dout = nn.Dropout2d(0.05)
+class Down_Residual_block(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size = 3, stride = 1, padding = 1):
+        super(Down_Residual_block, self).__init__()
         
-        self.inc = DoubleConv(n_channels, 64)
-        self.down1 = Down(64, 128)
-        self.down2 = Down(128, 256)
-        self.down3 = Down(256, 512)
-        self.down4 = Down(512, 1024)
-        # factor = 2 if bilinear else 1
-        # self.down4 = (Down(512, 1024 // factor))
-        # self.up1 = (Up(1024, 512 // factor, bilinear))
-        # self.up2 = (Up(512, 256 // factor, bilinear))
-        # self.up3 = (Up(256, 128 // factor, bilinear))
-        # self.up4 = (Up(128, 64, bilinear))
-        # self.outc = (OutConv(64, n_classes))
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size = kernel_size, stride = stride, padding = padding)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size = 3, stride = 1, padding = 1)
+        
+        self.bn1 = nn.GroupNorm(8, in_channels) #nn.BatchNorm3d(in_channels)
+        self.bn2 = nn.GroupNorm(8, out_channels) #nn.BatchNorm3d(out_channels)
+        self.act = nn.LeakyReLU()
+        
+    def forward(self, x_in):
+        x = self.bn1(x_in)
+        x = self.act(x)
+        x2 = self.conv1(x)
+        x = self.bn2(x2)
+        x = self.act(x)
+        x = self.conv2(x)
+        x = x + x2
+        return x
+
+class Upsample(nn.Module):
+    def __init__(self, size=None, scale_factor=None, mode='bilinear', align_corners=False):
+        super(Upsample, self).__init__()
+        self.align_corners = align_corners
+        self.mode = mode
+        self.scale_factor = scale_factor
+        self.size = size
 
     def forward(self, x):
-        x1 = self.inc(x)
-        #print('x1: ', x1.shape)
-        x2 = self.dout(self.down1(x1))
-        #print('x2: ', x2.shape)
-        x3 = self.down2(x2)
-        #print('x3: ', x3.shape)
-        x4 = self.dout(self.down3(x3))
-        #print('x4: ', x4.shape)
-        x5 = self.down4(x4)
-        #print('x5: ', x5.shape)
-        # x = self.up1(x5, x4)
-        # x = self.up2(x, x3)
-        # x = self.up3(x, x2)
-        # x = self.up4(x, x1)
-        # logits = self.outc(x)
+        return nn.functional.interpolate(x, size=self.size, scale_factor=self.scale_factor, mode=self.mode,
+                                         align_corners=self.align_corners)
+
+class Reduce_channs(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(Reduce_channs, self).__init__()
         
-        x5_flat = torch.flatten(x5, start_dim = 1)
-        #print('enc 2d out shape: ', x5.shape)
-        return [x5, x4, x3, x2, x1]
+        self.bn = nn.GroupNorm(8, in_channels) #nn.BatchNorm3d(in_channels)
+        self.act = nn.LeakyReLU()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size = 1)
+        
+    def forward(self, x):
+        x = self.bn(x)
+        x = self.act(x)
+        x = self.conv(x)
+        return x
+
+class Transposed_conv(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(Transposed_conv, self).__init__()
+        
+        self.bn = nn.GroupNorm(8, in_channels)
+        self.act = nn.LeakyReLU()      
+        self.trans = nn.ConvTranspose2d(in_channels, out_channels, kernel_size = 3, stride = 2, padding = 1)
+        
+    def forward(self, x):
+        x = self.bn(x)
+        x = self.act(x)
+        x = self.trans(x)
+        return x
+
+class Encoder_2d(nn.Module):
+    def __init__(self, in_channels, inter_channels):
+        super(Encoder_2d, self).__init__()
+        
+        self.dout = nn.Dropout2d(0.15)
+        
+        self.C_initial_normal = Initial_conv(in_channels, inter_channels) # these ones are random weights
+        self.C_d1c2 = Const_Residual_block(inter_channels, inter_channels) # these ones are random weights
+        
+        self.down_res_d2 = Down_Residual_block(inter_channels, int(inter_channels*2), kernel_size = 3, stride = 2)
+        self.d2c2 = Const_Residual_block(int(inter_channels*2), int(inter_channels*2))
+        
+        self.down_res_d3 = Down_Residual_block(int(inter_channels*2), int(inter_channels*4), kernel_size = 3, stride = 2)
+        self.d3c2 = Const_Residual_block(int(inter_channels*4), int(inter_channels*4))
+        self.d3c3 = Const_Residual_block(int(inter_channels*4), int(inter_channels*4))
+        # self.d3c4 = Const_Residual_block(int(inter_channels*4), int(inter_channels*4))
+        
+        # self.down_res_d4 = Down_Residual_block(int(inter_channels*4), int(inter_channels*8), kernel_size = 3, stride = 2)
+        # self.d4c2 = Const_Residual_block(int(inter_channels*8), int(inter_channels*8))
+        # self.d4c3 = Const_Residual_block(int(inter_channels*8), int(inter_channels*8))
+        # # self.d4c4 = Const_Residual_block(int(inter_channels*8), int(inter_channels*8))
+        # # self.d4c5 = Const_Residual_block(int(inter_channels*8), int(inter_channels*8))
+        
+        # self.down_res_d5 = Down_Residual_block(int(inter_channels*8), int(inter_channels*16), kernel_size = 3, stride = 2)
+        # self.d5c2 = Const_Residual_block(int(inter_channels*16), int(inter_channels*16))
+        # self.d5c3 = Const_Residual_block(int(inter_channels*16), int(inter_channels*16))
+        # # self.d5c4 = Const_Residual_block(int(inter_channels*16), int(inter_channels*16))
+        # # self.d5c5 = Const_Residual_block(int(inter_channels*16), int(inter_channels*16))
+        
+        # self.down_bottleneck = Down_Residual_block(int(inter_channels*16), int(inter_channels*32), kernel_size = 3, stride = 2)
+        # self.bottleneck_c2 = Const_Residual_block(int(inter_channels*32), int(inter_channels*32))
+        # self.bottleneck_c3 = Const_Residual_block(int(inter_channels*32), int(inter_channels*32))
+        # # self.bottleneck_c4 = Const_Residual_block(int(inter_channels*32), int(inter_channels*32))
+        # # self.bottleneck_c5 = Const_Residual_block(int(inter_channels*32), int(inter_channels*32))
+        
+    def forward(self, x):
+        x = self.C_initial_normal(x)
+        x1 = self.C_d1c2(x)
+        
+        x2 = self.down_res_d2(x1)
+        x2 = self.d2c2(x2)
+        
+        x3 = self.down_res_d3(x2)
+        x3 = self.d3c2(x3)
+        x3 = self.d3c3(x3)
+        # x3 = self.d3c4(x3)
+        x3 = self.dout(x3)
+        
+        # x4 = self.down_res_d4(x3)
+        # x4 = self.d4c2(x4)
+        # x4 = self.d4c3(x4)
+        # # x4 = self.d4c4(x4)
+        # # x4 = self.d4c5(x4)
+        # x4 = self.dout(x4)
+        
+        # x5 = self.down_res_d5(x4)
+        # x5 = self.d5c2(x5)
+        # x5 = self.d5c3(x5)
+        # # x5 = self.d5c4(x5)
+        # # x5 = self.d5c5(x5)
+        # x5 = self.dout(x5)
+        
+        # x6 = self.down_bottleneck(x5)
+        # x6 = self.bottleneck_c2(x6)
+        # x6 = self.bottleneck_c3(x6)
+        # # x6 = self.bottleneck_c4(x6)
+        # # x6 = self.bottleneck_c5(x6)
+        # x6 = self.dout(x6)
+        
+        return [x3, x2, x1] # [x6, x5, x4, x3, x2, x1]
